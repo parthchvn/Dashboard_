@@ -84,3 +84,41 @@ def clean_json(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     return value
+
+
+def parse_wallets(value: str | tuple[str, ...] | list[str] | None = None) -> tuple[str, ...]:
+    """Exact EVM addresses, case-insensitive. Multiple addresses form an OR filter."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        if len(value) > 8192:
+            raise ValueError("Wallet filter is too long (maximum 8,192 characters).")
+        parts = re.split(r"[\s,;]+", value.strip()) if value.strip() else []
+    else:
+        parts = list(value)
+    result = set()
+    for part in parts:
+        if not isinstance(part, str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", part, re.IGNORECASE):
+            raise ValueError("Use full wallet addresses: 0x followed by 40 hexadecimal characters.")
+        result.add(part.lower())
+    if len(result) > 50:
+        raise ValueError("Filter at most 50 distinct wallet addresses at a time.")
+    return tuple(sorted(result))
+
+
+def wallet_predicate(wallets: tuple[str, ...], role: str = "either") -> tuple[str, list[str]]:
+    """One shared, parameter-bound predicate for series, tape, and exports.
+
+    Never join one row per address: a fill matching both sides still counts once.
+    Role describes the recorded fill side, not a human identity or a position.
+    """
+    wallets = parse_wallets(wallets)
+    if role not in {"either", "maker", "taker"}:
+        raise ValueError("Wallet role must be either, maker, or taker.")
+    if not wallets:
+        return "TRUE", []
+    placeholders = ",".join("?" for _ in wallets)
+    if role == "either":
+        return f"(lower(maker) IN ({placeholders}) OR lower(taker) IN ({placeholders}))", list(wallets) * 2
+    # Column names come only from the fixed allowlist above, not from user SQL.
+    return f"lower({role}) IN ({placeholders})", list(wallets)

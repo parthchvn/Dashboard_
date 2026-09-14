@@ -13,7 +13,7 @@ from pathlib import Path
 import uuid
 
 from filelock import FileLock
-from .domain import EXCHANGES, LEVELS, SCHEMA_VERSION, choose_level, epoch, identifier, metadata_outcome
+from .domain import EXCHANGES, LEVELS, SCHEMA_VERSION, choose_level, epoch, identifier, metadata_outcome, parse_wallets, wallet_predicate
 
 LOG = logging.getLogger(__name__)
 ORDER = "timestamp, block_number, log_index, transaction_hash, contract"
@@ -273,7 +273,10 @@ class Store:
         return destination
 
     def series(self, market_id: str, start: int | None = None, end: int | None = None,
-               level: str = "auto", target: int = 1400) -> dict:
+               level: str = "auto", target: int = 1400, *,
+               wallets: str | tuple[str, ...] = "", wallet_role: str = "either") -> dict:
+        addresses = parse_wallets(wallets)
+        predicate, params = wallet_predicate(addresses, wallet_role)
         market = self.market(market_id)
         if not market["fill_count"]:
             return {"market":market,"rows":[],"level":"raw","empty":True}
@@ -284,16 +287,27 @@ class Store:
         if level not in {"auto",*LEVELS}:
             raise ValueError("Unknown resolution")
         raw = self.ensure_level(market_id,"raw")
-        source = f"SELECT * FROM read_parquet({literal(raw)}) WHERE timestamp>={start} AND timestamp<{end}"
+        source = f"SELECT * FROM read_parquet({literal(raw)}) WHERE timestamp>={start} AND timestamp<{end} AND ({predicate})"
         with self.connect() as con:
-            count = con.execute(f"SELECT count(*) FROM ({source})").fetchone()[0]
+            count = con.execute(f"SELECT count(*) FROM ({source})", params).fetchone()[0]
             selected = choose_level(count,end-start,target) if level=="auto" else level
-            previous = rows(con,f"SELECT * FROM read_parquet({literal(raw)}) WHERE timestamp<{start} ORDER BY {DESC} LIMIT 1")
+            previous = rows(con,f"SELECT * FROM read_parquet({literal(raw)}) WHERE timestamp<{start} AND ({predicate}) ORDER BY {DESC} LIMIT 1", params)
         if selected=="raw":
             if count>6000:
                 raise OverflowError(f"{count:,} raw fills. Zoom in or select Auto; no fills were silently dropped.")
             with self.connect() as con:
-                data = rows(con,source+f" ORDER BY {ORDER}")
+                data = rows(con,source+f" ORDER BY {ORDER}", params)
+        elif addresses:
+            # Cached bars describe the whole market. Wallet subsets must be
+            # aggregated from their actual raw fills, never filtered after bars.
+            seconds = LEVELS[selected]
+            with self.connect() as con:
+                data = rows(con, aggregate_sql(source, seconds) + " LIMIT 6001", params)
+            if len(data) > 6000:
+                raise OverflowError("More than 6,000 observed bins. Choose Auto or a coarser resolution.")
+            for row in data:
+                if row["bin_start"] < start or row["bin_end"] > end:
+                    row["partial"] = True
         else:
             seconds = LEVELS[selected]
             path = self.ensure_level(market_id,selected)
@@ -323,9 +337,11 @@ class Store:
                 coalesce(sum(usd_amount),0) AS notional,count(DISTINCT timestamp // 30) AS occupied_30s,
                 min(yes_price) AS low,max(yes_price) AS high,
                 first(yes_price ORDER BY {ORDER}) AS first_price,last(yes_price ORDER BY {ORDER}) AS last_price,
-                max(timestamp) AS last_ts FROM ({source})""")[0]
+                max(timestamp) AS last_ts FROM ({source})""", params)[0]
         return dict(market=market,rows=data,level=selected,bin_seconds=LEVELS[selected],start=start,end=end,
                     stats=stats,previous_observation=previous[0] if previous else None,
+                    filters={"wallets":list(addresses),"wallet_role":wallet_role},
+                    scope="wallet_subset" if addresses else "market",
                     forward_filled=False,detector_selects_research_samples=False)
 
     def event(self, event_id: str, as_of: int | None = None, stale_after: int = 300) -> dict:

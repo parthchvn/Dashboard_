@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from filelock import FileLock, Timeout
 from .data import Store, ORDER, DESC, rows
-from .domain import LEVELS, clean_json, identifier
+from .domain import LEVELS, clean_json, identifier, parse_wallets, wallet_predicate
 
 
 def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> FastAPI:
@@ -85,8 +85,9 @@ def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> Fast
 
     @app.get("/api/markets/{market_id}/series")
     def series(market_id: str,start: int | None = Query(None,ge=0),end: int | None = Query(None,ge=1),
-               level: str = "auto",target: int = Query(1400,ge=100,le=3000)):
-        return clean_json(store.series(market_id,start,end,level,target))
+               level: str = "auto",target: int = Query(1400,ge=100,le=3000),
+               wallets: str = Query("",max_length=8192),wallet_role: str = Query("either",max_length=10)):
+        return clean_json(store.series(market_id,start,end,level,target,wallets=wallets,wallet_role=wallet_role))
 
     @app.get("/api/events/{event_id}")
     def event(event_id: str,as_of: int | None = Query(None,ge=0,le=4102444800),
@@ -95,14 +96,18 @@ def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> Fast
 
     @app.get("/api/markets/{market_id}/trades")
     def trades(market_id: str,start: int = Query(0,ge=0),end: int = Query(4102444801,ge=1,le=4102444801),
-               limit: int = Query(50,ge=1,le=200),offset: int = Query(0,ge=0,le=100000)):
+               limit: int = Query(50,ge=1,le=200),offset: int = Query(0,ge=0,le=100000),
+               wallets: str = Query("",max_length=8192),wallet_role: str = Query("either",max_length=10)):
         identifier(market_id)
         if end<=start:
             raise ValueError("end must be after start")
+        addresses = parse_wallets(wallets)
+        predicate, params = wallet_predicate(addresses, wallet_role)
         with store.connect() as con:
             data = rows(con,f"""SELECT * FROM trades WHERE market_id=? AND timestamp>=? AND timestamp<?
-                ORDER BY {DESC} LIMIT ? OFFSET ?""",[market_id,start,end,limit+1,offset])
+                AND ({predicate}) ORDER BY {DESC} LIMIT ? OFFSET ?""",[market_id,start,end,*params,limit+1,offset])
         return dict(rows=data[:limit],has_more=len(data)>limit,offset=offset,
+                    filters={"wallets":list(addresses),"wallet_role":wallet_role},
                     note="One chain-log fill per row. Outcome-1 equivalent taker action, not verified human decisions.")
 
     @app.get("/api/markets/{market_id}/reviews")
@@ -117,12 +122,15 @@ def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> Fast
         return clean_json(doc)
 
     @app.get("/api/markets/{market_id}/export.csv")
-    def export(market_id: str,start: int = Query(0,ge=0),end: int = Query(4102444801,ge=1,le=4102444801)):
+    def export(market_id: str,start: int = Query(0,ge=0),end: int = Query(4102444801,ge=1,le=4102444801),
+               wallets: str = Query("",max_length=8192),wallet_role: str = Query("either",max_length=10)):
         identifier(market_id)
         if end<=start:
             raise ValueError("end must be after start")
-        params = [market_id,start,end]
-        where = "FROM trades WHERE market_id=? AND timestamp>=? AND timestamp<?"
+        addresses = parse_wallets(wallets)
+        predicate, wallet_params = wallet_predicate(addresses, wallet_role)
+        params = [market_id,start,end,*wallet_params]
+        where = f"FROM trades WHERE market_id=? AND timestamp>=? AND timestamp<? AND ({predicate})"
         with store.connect() as con:
             count = con.execute("SELECT count(*) "+where,params).fetchone()[0]
         if count>100000:
