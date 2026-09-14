@@ -71,6 +71,52 @@ def main():
                     with page.expect_download() as download:
                         page.locator('#export').click()
                     assert download.value.suggested_filename.endswith('-observed-fills.csv')
+                    # Granularity lives in the filter form and is applied with dates.
+                    expect(page.locator('#filter-form #level')).to_have_count(1)
+                    expect(page.locator('#level')).to_be_visible()
+                    for chosen in ('1m','2m'):
+                        page.locator('#level').select_option(chosen)
+                        # A draft selection does not change the active view before Apply.
+                        if chosen=='1m': expect(page.locator('#resolution-badge')).to_contain_text('RAW')
+                        with page.expect_response(lambda r:'/series?' in r.url and ('level='+chosen) in r.url) as bars_response:
+                            page.locator('#apply-filters').click()
+                        bars=bars_response.value.json()
+                        expect(page.locator('#chart-loading')).to_be_hidden()
+                        assert bars['level']==chosen
+                        assert sum(b['fill_count'] for b in bars['rows'])==day['stats']['fill_count']
+                        assert bars['stats']==day['stats']
+                    expect(page.locator('#resolution-badge')).to_contain_text('2M BARS')
+                    page.screenshot(path=str(output/'granularity-desktop.png'),full_page=True)
+                    page.locator('#level').select_option('custom')
+                    expect(page.locator('#custom-granularity')).to_be_visible()
+                    page.locator('#granularity-minutes').fill('7')
+                    with page.expect_response(lambda r:'/series?' in r.url and 'level=7m' in r.url) as custom_response:
+                        page.locator('#apply-filters').click()
+                    custom=custom_response.value.json()
+                    assert custom['bin_seconds']==420 and custom['stats']==day['stats']
+                    expect(page.locator('#chart-loading')).to_be_hidden()
+                    custom_url=page.url
+                    assert 'level=7m' in custom_url
+                    page.reload()
+                    expect(page.locator('#resolution-badge')).to_contain_text('7M BARS')
+                    expect(page.locator('#chart-loading')).to_be_hidden()
+                    expect(page.locator('#level')).to_have_value('custom')
+                    expect(page.locator('#granularity-minutes')).to_have_value('7')
+                    assert page.url==custom_url
+                    # Missing custom overlays must not break a valid custom chart.
+                    page.locator('#show-reviews').check()
+                    expect(page.locator('#review-list')).to_contain_text('No 7m overlay')
+                    page.locator('#show-reviews').uncheck()
+                    for bad in ('0','1.5','1441'):
+                        page.locator('#granularity-minutes').fill(bad)
+                        page.locator('#apply-filters').click()
+                        expect(page.locator('#filter-error')).to_contain_text('whole number')
+                        expect(page.locator('#resolution-badge')).to_contain_text('7M BARS')
+                        assert page.url==custom_url
+                    page.locator('#level').select_option('auto')
+                    page.locator('#apply-filters').click()
+                    expect(page.locator('#resolution-badge')).to_contain_text('RAW')
+                    expect(page.locator('#chart-loading')).to_be_hidden()
                     # Invalid dates do not silently change the active view.
                     old_count=page.locator('#metric-fills').inner_text()
                     page.locator('#range-start').fill('2025-03-02')
@@ -117,6 +163,17 @@ def main():
                     assert combined['stats']['fill_count']==len(expected)
                     assert set(combined['filters']['wallets'])==chosen
                     expect(page.locator('#filter-badge')).to_have_text('2 WALLETS')
+                    # Two-minute bars and raw CSV remain consistent under wallet OR.
+                    page.locator('#level').select_option('2m')
+                    with page.expect_response(lambda r:'/series?' in r.url and 'level=2m' in r.url) as wallet_bars_response:
+                        page.locator('#apply-filters').click()
+                    wallet_bars=wallet_bars_response.value.json()
+                    expect(page.locator('#chart-loading')).to_be_hidden()
+                    assert wallet_bars['stats']==combined['stats']
+                    assert sum(b['fill_count'] for b in wallet_bars['rows'])==len(expected)
+                    with page.expect_download() as raw_download:
+                        page.locator('#export').click()
+                    assert len(list(csv.DictReader(Path(raw_download.value.path()).read_text().splitlines())))==len(expected)
                     # Copied views retain wallet and UTC date filters after a reload.
                     saved_url=page.url
                     page.reload()
@@ -124,6 +181,7 @@ def main():
                     expect(page.locator('#chart-loading')).to_be_hidden()
                     expect(page.locator('#range-end')).to_have_value('2025-03-01')
                     assert page.url==saved_url
+                    expect(page.locator('#level')).to_have_value('2m')
 
                     # Unknown valid address is an explicit empty result, not all trades.
                     page.locator('#wallet-ids').fill('0x'+'f'*40)
@@ -135,6 +193,9 @@ def main():
                     expect(page.locator('#filter-badge')).to_have_text('ALL WALLETS')
                     expect(page.locator('#chart-loading')).to_be_hidden()
                     expect(page.locator('#metric-fills')).to_have_text(str(day['stats']['fill_count']))
+                    page.locator('#level').select_option('auto')
+                    page.locator('#apply-filters').click()
+                    expect(page.locator('#chart-loading')).to_be_hidden()
                     page.locator('#all-dates').click()
                     expect(page.locator('#chart-loading')).to_be_hidden()
                     page.locator('#comparison-tab').click()
@@ -154,9 +215,14 @@ def main():
                     # Mobile controls remain usable, not just overflow-free.
                     page.locator('#range-start').fill('2025-03-01')
                     page.locator('#range-end').fill('2025-03-02')
+                    page.locator('#level').select_option('custom')
+                    page.locator('#granularity-minutes').fill('3')
                     page.locator('#apply-filters').click()
                     expect(page.locator('#chart-loading')).to_be_hidden()
                     expect(page.locator('#range-end')).to_have_value('2025-03-02')
+                    expect(page.locator('#resolution-badge')).to_contain_text('3M BARS')
+                    assert page.locator('html').evaluate('(el) => el.scrollWidth')<=390
+                    page.screenshot(path=str(output/'granularity-mobile.png'),full_page=True)
                     assert not errors,errors
                     print('Browser smoke passed: real ingestion/API, inline UTC dates, wallet roles and multi-address filtering, CSV consistency, permalink reload, no-match and invalid-input states, inspector, event view, dark mode and mobile layout.')
                 except BaseException:

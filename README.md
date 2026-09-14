@@ -79,6 +79,18 @@ API endpoints `series`, `trades`, and `export.csv` accept the same optional quer
 
 API timestamps remain `[start,end)` Unix seconds; only the date cells provide inclusive-day conversion.
 
+## Chart granularity
+
+The **Filter this market** row now contains **Initial date**, **Final date**, **Granularity**, **Wallet IDs**, and **Wallet role**. Set all of them and click **Apply filters** once.
+
+Choose **1 minute**, **2 minutes**, **5 minutes**, **10 minutes**, **15 minutes**, **30 minutes**, **1 hour**, **4 hours**, or **1 day**. **Raw fills**, **30 seconds**, and zoom-aware **Auto** are also available. **Custom minutes…** accepts any whole number from **1 to 1440**, such as 3 or 7. Invalid intervals do not change the active view. Manual granularity stays fixed when zooming or changing wallet filters; **Auto** chooses the displayed resolution. Copy view and reload retain the applied interval.
+
+Granularity groups the **price chart and volume bars**, not the trade table or CSV export. A 2-minute bar summarizes all matching raw fills in that interval, with exact OHLC, share-weighted VWAP, weighted median, distinct transaction count, and notional. It does not discard every other point or average the 1-minute medians. Full-window statistics stay identical when only granularity changes. Wallet filtering happens **before** aggregation.
+
+Bins are aligned to Unix epoch UTC and labeled by their end, with left-closed intervals. For example, ordinary 2-minute bins are `[12:00,12:02)`, `[12:02,12:04)`. A custom interval that does not divide one day (such as 7 minutes) stays on that fixed epoch grid across midnight; it is not restarted at the selected initial date. Boundary bins only include the selected-window fills. Empty bins remain absent.
+
+The API accepts `level=2m`, `level=7m`, etc. Equivalent preset aliases such as `60m` canonicalize to `1h`. Custom intervals without a preset are aggregated from the selected raw window on demand, without building another full-history cache. Existing cached intervals and imported databases need no migration. Manual requests over 6,000 observed bars are rejected with a clear message; choose a shorter date range, a coarser interval, or Auto. They are never silently downsampled. Optional review overlays are used only at their exact level; a missing custom-level overlay is shown as unavailable, not substituted with another detector's interval.
+
 ## Data semantics and safeguards
 
 ### Original trades only
@@ -100,7 +112,7 @@ Optional `event_id`, `condition_id`, and `asset_id` are preserved. Metadata uses
 
 **Time stays honest.** Fills are ordered by market, timestamp, block number, log index, transaction hash and contract. No subsecond timing is invented. Empty intervals never enter analytical tables. The renderer carries an observation only with increasing staleness: solid until the selected threshold, dashed/faded until four times the threshold, then absent. Previous-window observations are returned separately from actual observations in the selected window. Raw fills, not visual carry values, feed all statistics and reviews.
 
-**Aggregation is exact.** The levels are `raw`, `30s`, `1m`, `5m`, `1h`, and `1d`. Each occupied left-closed `[bin_start, bin_end)` has OHLC, share-weighted VWAP, lower share-weighted median, original cash notional, share volume, fill count, distinct transaction count, and first/last trade times. Every level is recomputed from raw fills, not from averages or medians of smaller bars. Clipped boundary bars include only selected-window fills and retain their nominal bin-end label.
+**Aggregation is exact.** Cached presets are `raw`, `30s`, `1m`, `2m`, `5m`, `10m`, `15m`, `30m`, `1h`, `4h`, and `1d`. Custom whole-minute chart intervals from `1m` to `1440m` are also supported. Each occupied left-closed `[bin_start, bin_end)` has OHLC, share-weighted VWAP, lower share-weighted median, original cash notional, share volume, fill count, distinct transaction count, and first/last trade times. Every level is recomputed from raw fills, not from averages or medians of smaller bars. Clipped boundary bars include only selected-window fills and retain their nominal bin-end label.
 
 **Snapshots and caches are reproducible.** Ingestion builds a separate database and publishes it atomically. Snapshot-namespaced caches prevent reuse after re-ingestion; per-market locks and atomic renames prevent half-written cache files. Manifests record file names, sizes, modification times and supplied revision, not expensive full-file hashes. The original files remain your source of truth.
 

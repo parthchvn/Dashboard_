@@ -13,7 +13,7 @@ from pathlib import Path
 import uuid
 
 from filelock import FileLock
-from .domain import EXCHANGES, LEVELS, SCHEMA_VERSION, choose_level, epoch, identifier, metadata_outcome, parse_wallets, wallet_predicate
+from .domain import EXCHANGES, LEVELS, SCHEMA_VERSION, choose_level, epoch, identifier, metadata_outcome, parse_wallets, wallet_predicate, normalize_level, level_seconds
 
 LOG = logging.getLogger(__name__)
 ORDER = "timestamp, block_number, log_index, transaction_hash, contract"
@@ -195,8 +195,8 @@ def ingest(paths: list[str], db_path: str | Path, markets: str | None = None, *,
 
 
 def aggregate_sql(source: str, seconds: int) -> str:
-    if seconds not in LEVELS.values() or not seconds:
-        raise ValueError("Invalid aggregation interval")
+    if type(seconds) is not int or not (seconds == 30 or (60 <= seconds <= 86400 and seconds % 60 == 0)):
+        raise ValueError("Invalid aggregation interval: use 30 seconds or 1–1440 whole minutes")
     return f"""WITH bucketed AS (
         SELECT *, (timestamp // {seconds}) * {seconds} AS bin_start FROM ({source})
     ), weighted AS (
@@ -275,6 +275,7 @@ class Store:
     def series(self, market_id: str, start: int | None = None, end: int | None = None,
                level: str = "auto", target: int = 1400, *,
                wallets: str | tuple[str, ...] = "", wallet_role: str = "either") -> dict:
+        level = normalize_level(level, allow_auto=True)
         addresses = parse_wallets(wallets)
         predicate, params = wallet_predicate(addresses, wallet_role)
         market = self.market(market_id)
@@ -284,8 +285,6 @@ class Store:
         end = market["last_ts"]+1 if end is None else int(end)
         if start<0 or end<=start or end>4102444801 or not 100<=target<=3000:
             raise ValueError("Use a valid [start,end) Unix-second window and target between 100 and 3000.")
-        if level not in {"auto",*LEVELS}:
-            raise ValueError("Unknown resolution")
         raw = self.ensure_level(market_id,"raw")
         source = f"SELECT * FROM read_parquet({literal(raw)}) WHERE timestamp>={start} AND timestamp<{end} AND ({predicate})"
         with self.connect() as con:
@@ -297,10 +296,11 @@ class Store:
                 raise OverflowError(f"{count:,} raw fills. Zoom in or select Auto; no fills were silently dropped.")
             with self.connect() as con:
                 data = rows(con,source+f" ORDER BY {ORDER}", params)
-        elif addresses:
-            # Cached bars describe the whole market. Wallet subsets must be
-            # aggregated from their actual raw fills, never filtered after bars.
-            seconds = LEVELS[selected]
+        elif addresses or selected not in LEVELS:
+            # Wallet subsets and custom intervals are recomputed exactly from
+            # selected raw fills. Do not create an archive-sized cache per custom
+            # interval, or use market-wide bars for a wallet subset.
+            seconds = level_seconds(selected)
             with self.connect() as con:
                 data = rows(con, aggregate_sql(source, seconds) + " LIMIT 6001", params)
             if len(data) > 6000:
@@ -338,7 +338,7 @@ class Store:
                 min(yes_price) AS low,max(yes_price) AS high,
                 first(yes_price ORDER BY {ORDER}) AS first_price,last(yes_price ORDER BY {ORDER}) AS last_price,
                 max(timestamp) AS last_ts FROM ({source})""", params)[0]
-        return dict(market=market,rows=data,level=selected,bin_seconds=LEVELS[selected],start=start,end=end,
+        return dict(market=market,rows=data,level=selected,bin_seconds=level_seconds(selected),start=start,end=end,
                     stats=stats,previous_observation=previous[0] if previous else None,
                     filters={"wallets":list(addresses),"wallet_role":wallet_role},
                     scope="wallet_subset" if addresses else "market",

@@ -3,9 +3,10 @@
 .filter-heading{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:17px}
 .filter-heading h2{font-size:13px;margin:0}
 .filter-heading p,.filter-notes p{font-size:10px;line-height:1.7;color:var(--muted);margin:4px 0 0}
-.filter-grid{display:grid;grid-template-columns:minmax(145px,1fr) minmax(145px,1fr) minmax(220px,2fr) minmax(135px,.9fr);gap:13px}
+.filter-grid{display:grid;grid-template-columns:minmax(135px,1fr) minmax(135px,1fr) minmax(155px,1.1fr) minmax(190px,1.65fr) minmax(130px,.95fr);grid-template-areas:"start end granularity wallets role";gap:13px}
+.start-field{grid-area:start}.end-field{grid-area:end}.granularity-field{grid-area:granularity}.wallet-field{grid-area:wallets}.role-field{grid-area:role}
 .filter-field{font-size:11px;font-weight:550;display:block;min-width:0}
-.filter-field>span{font-size:9px;font-weight:400;color:var(--muted);margin-left:4px}
+.filter-field>span,.granularity-field>label>span{font-size:9px;font-weight:400;color:var(--muted);margin-left:4px}
 .filter-field input,.filter-field textarea,.filter-field select{display:block;width:100%;min-width:0;height:43px;margin-top:8px;padding:11px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font:inherit;font-weight:400;box-sizing:border-box}
 .filter-field input{font-variant-numeric:tabular-nums}
 .filter-field textarea{font:11px/19px ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical;min-height:43px;max-height:140px}
@@ -24,5 +25,9 @@
 .wallet-button.matched{color:var(--accent);font-weight:650}
 .inspector-actions{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}
 #filter-badge{white-space:nowrap}
-@media(max-width:1250px){.filter-grid{grid-template-columns:1fr 1fr}.wallet-field{grid-column:1}.filters-panel{padding:18px}.filter-footer{align-items:flex-start}.filter-actions{gap:10px}}
-@media(max-width:780px){.filters-panel{padding:16px;margin-bottom:15px}.filter-heading h2{font-size:12px}.filter-heading p{font-size:9px}.filter-heading .tag{font-size:8px}.filter-grid{gap:14px 10px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.filter-field{font-size:10px}.filter-field>span{font-size:8px}.filter-field input,.filter-field select{font-size:12px;padding:9px 8px}.wallet-field{grid-column:1/-1}.wallet-field textarea{font-size:12px}.role-field{grid-column:1/-1}.filter-footer{flex-direction:column;gap:12px}.filter-actions{width:100%;justify-content:flex-end;gap:17px}.filter-actions .primary{font-size:11px}.filter-notes p{font-size:9px}.toolbar-note{font-size:8px;max-width:55%;line-height:1.6}.filter-scope{font-size:10px}.filter-field input::-webkit-date-and-time-value{text-align:left}}
+.custom-granularity{display:flex;align-items:center;gap:9px;margin-top:8px}
+.custom-granularity[hidden]{display:none}
+.filter-field .custom-granularity input{margin-top:0;width:85px;flex:1}
+.custom-granularity>span{font-size:10px;color:var(--muted);font-weight:400}
+@media(max-width:1250px){.filter-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"start end" "granularity role" "wallets wallets"}.filters-panel{padding:18px}.filter-footer{align-items:flex-start}.filter-actions{gap:10px}}
+@media(max-width:780px){.filters-panel{padding:16px;margin-bottom:15px}.filter-heading h2{font-size:12px}.filter-heading p{font-size:9px}.filter-heading .tag{font-size:8px}.filter-grid{gap:14px 10px;grid-template-areas:"start end" "granularity granularity" "wallets wallets" "role role"}.filter-field{font-size:10px}.filter-field>span,.granularity-field>label>span{font-size:8px}.filter-field input,.filter-field select{font-size:12px;padding:9px 8px}.wallet-field textarea{font-size:12px}.filter-footer{flex-direction:column;gap:12px}.filter-actions{width:100%;justify-content:flex-end;gap:17px}.filter-actions .primary{font-size:11px}.filter-notes p{font-size:9px}.filter-scope{font-size:10px}.filter-field input::-webkit-date-and-time-value{text-align:left}}
