@@ -24,3 +24,16 @@ assert.throws(()=>parseWallets(`${a},invalid`),/full wallet/);
 assert.throws(()=>parseWallets(' '.repeat(8193)),/long/);
 assert.throws(()=>parseWallets(Array.from({length:51},(_,i)=>'0x'+i.toString(16).padStart(40,'0')).join(',')),/50/);
 console.log('Filter semantics: 19 assertions passed (UTC inclusive dates, DST, invalid input, exact wallet OR).');
+const {normalizeLevel,granularity,granularityControls}=require('../xvi/static/filters.js');
+for(const level of ['auto','raw','30s','1m','2m','5m','10m','15m','30m','1h','4h','1d','7m']) {
+  assert.equal(normalizeLevel(level),level);
+  const controls=granularityControls(level);
+  assert.equal(granularity(controls.choice,controls.minutes),level);
+}
+for(const [value,expected] of [['1','1m'],['2','2m'],['3','3m'],['7','7m'],['60','1h'],['240','4h'],['1440','1d']]) {
+  assert.equal(granularity('custom',value),expected);
+}
+for(const invalid of ['', '0','-1','1.5','1441','1e2','01','NaN','2m']) assert.throws(()=>granularity('custom',invalid),/whole number/);
+for(const invalid of ['__proto__','constructor','../../raw','2m;DROP','1441m','auto()']) assert.throws(()=>normalizeLevel(invalid),/granularity/);
+assert.deepEqual(granularityControls('7m'),{choice:'custom',minutes:'7'});
+console.log('Granularity semantics passed: presets, custom integer minutes, canonical aliases, restored controls, invalid values.');

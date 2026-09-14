@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from filelock import FileLock, Timeout
 from .data import Store, ORDER, DESC, rows
-from .domain import LEVELS, clean_json, identifier, parse_wallets, wallet_predicate
+from .domain import clean_json, identifier, parse_wallets, wallet_predicate, normalize_level
 
 
 def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> FastAPI:
@@ -112,7 +112,8 @@ def create_app(db: str = "data/polymarket.duckdb", cache: str = "cache") -> Fast
 
     @app.get("/api/markets/{market_id}/reviews")
     def reviews(market_id: str,level: str = "30s",start: int = Query(0,ge=0),end: int = Query(4102444801,ge=1)):
-        if level not in LEVELS or end<=start:
+        level = normalize_level(level)
+        if end<=start:
             raise ValueError("Invalid review level or window")
         path = store.directory(market_id)/f"reviews-{level}.json"
         if not path.exists():

@@ -8,7 +8,35 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-LEVELS = {"raw": 0, "30s": 30, "1m": 60, "5m": 300, "1h": 3600, "1d": 86400}
+# Ordered presets for Auto and reusable market-wide caches.
+LEVELS = {"raw": 0, "30s": 30, "1m": 60, "2m": 120, "5m": 300,
+          "10m": 600, "15m": 900, "30m": 1800, "1h": 3600,
+          "4h": 14400, "1d": 86400}
+MAX_CUSTOM_MINUTES = 1440
+
+
+def normalize_level(value: str, *, allow_auto: bool = False) -> str:
+    """Validate granularity before SQL/path use; canonicalize equivalent presets.
+
+    Custom intervals are whole minutes (1..1440), aligned to Unix epoch UTC.
+    Manual intervals never fall back silently to Auto or another resolution.
+    """
+    if value == "auto" and allow_auto:
+        return value
+    if isinstance(value, str) and value in LEVELS:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,3}m", value):
+        minutes = int(value[:-1])
+        if minutes <= MAX_CUSTOM_MINUTES:
+            seconds = minutes * 60
+            return next((name for name, size in LEVELS.items() if size == seconds), value)
+    raise ValueError("Unknown resolution. Choose Auto, raw, 30s, a preset, or 1–1440 whole minutes (e.g. 2m or 7m).")
+
+
+def level_seconds(value: str) -> int:
+    value = normalize_level(value)
+    return LEVELS[value] if value in LEVELS else int(value[:-1]) * 60
+
 SCHEMA_VERSION = 1
 EXCHANGES = (
     "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e",

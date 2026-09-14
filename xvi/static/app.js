@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $=id=>document.getElementById(id);
-  const {dateWindow,displayDates,parseWallets}=window.XviFilters;
+  const {dateWindow,displayDates,parseWallets,normalizeLevel,granularity,granularityControls}=window.XviFilters;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const price=v=>Number.isFinite(v)?`${(v*100).toFixed(1)}¢`:'—';
   const number=v=>Number(v||0).toLocaleString('en-US');
@@ -10,7 +10,7 @@
   const stamp=t=>t===null||t===undefined?'—':new Intl.DateTimeFormat('en-US',{
     timeZone:'UTC',month:'short',day:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false
   }).format(new Date(t*1000));
-  const state={mode:'markets',market:null,event:null,audit:null,series:null,start:null,end:null,offset:0,sequence:0,eventSequence:0,librarySequence:0,charts:[],wallets:[],walletRole:'either',dateDirty:false};
+  const state={mode:'markets',market:null,event:null,audit:null,series:null,start:null,end:null,offset:0,sequence:0,eventSequence:0,librarySequence:0,charts:[],wallets:[],walletRole:'either',dateDirty:false,level:'auto'};
   let controller,searchTimer,toastTimer;
   const chart=new MarketChart($('price-chart'),{tooltip:$('chart-tooltip'),navigator:$('navigator'),onRange:setRange,onReset:resetRange});
 
@@ -43,7 +43,18 @@
   function walletQuery(){return state.wallets.length?{wallets:state.wallets.join(','),wallet_role:state.walletRole}:{};}
   function clearFilterError(){
     $('filter-error').hidden=true;
-    for(const id of ['range-start','range-end','wallet-ids'])$(id).removeAttribute('aria-invalid');
+    for(const id of ['range-start','range-end','wallet-ids','level','granularity-minutes'])$(id).removeAttribute('aria-invalid');
+  }
+  function toggleCustomGranularity(){
+    const custom=$('level').value==='custom';
+    $('custom-granularity').hidden=!custom;$('granularity-minutes').disabled=!custom;
+    clearFilterError();
+  }
+  function setGranularityControls(level){
+    const controls=granularityControls(level);
+    $('level').value=controls.choice;
+    if(controls.minutes)$('granularity-minutes').value=controls.minutes;
+    toggleCustomGranularity();
   }
   function syncDates(data){
     const dates=displayDates(data.start,data.end);
@@ -60,15 +71,17 @@
   }
   async function applyFilters(event){
     event.preventDefault();if(!state.market)return;clearFilterError();
-    let dates,wallets;
+    let dates,wallets,level;
     try{dates=dateWindow($('range-start').value,$('range-end').value);}
     catch(error){$('range-start').setAttribute('aria-invalid','true');$('range-end').setAttribute('aria-invalid','true');$('filter-error').textContent=error.message;$('filter-error').hidden=false;return;}
     try{wallets=parseWallets($('wallet-ids').value);}
     catch(error){$('wallet-ids').setAttribute('aria-invalid','true');$('filter-error').textContent=error.message;$('filter-error').hidden=false;return;}
+    try{level=granularity($('level').value,$('granularity-minutes').value);}
+    catch(error){$('level').setAttribute('aria-invalid','true');$('granularity-minutes').setAttribute('aria-invalid','true');$('filter-error').textContent=error.message;$('filter-error').hidden=false;return;}
     if(state.dateDirty||!state.series){state.start=dates.start;state.end=dates.end;}
     const role=$('wallet-role').value;
     const changed=wallets.join(',')!==state.wallets.join(',')||role!==state.walletRole;
-    state.wallets=wallets;state.walletRole=role;state.offset=0;
+    state.wallets=wallets;state.walletRole=role;state.level=level;state.offset=0;
     $('wallet-ids').value=wallets.join(', ');renderFilters();
     if(changed)chart.overview=null;
     await loadSeries(changed);
@@ -111,13 +124,13 @@
     state.wallets=initialFilters?.wallets||[];state.walletRole=initialFilters?.role||'either';state.dateDirty=false;
     $('wallet-ids').value=state.wallets.join(', ');$('wallet-role').value=state.walletRole;clearFilterError();renderFilters();
     chart.overview=null;clearWindow();priceView();$('dashboard').hidden=false;$('onboarding').hidden=true;markSelected(id);
-    $('level').value='auto';await loadSeries(true);
+    state.level=normalizeLevel(initialFilters?.level||'auto');setGranularityControls(state.level);await loadSeries(true);
   }
   function queryWindow(){return new URLSearchParams({
-    ...(state.start!==null?{start:state.start,end:state.end}:{}),...walletQuery(),level:$('level').value,
+    ...(state.start!==null?{start:state.start,end:state.end}:{}),...walletQuery(),level:state.level,
     target:Math.max(100,Math.min(3000,Math.round($('price-chart').getBoundingClientRect().width*4)))
   });}
-  function updateHash(){if(!state.market)return;history.replaceState(null,'','#'+new URLSearchParams({market:state.market.market_id,...(state.start!==null?{start:state.start,end:state.end}:{}),...walletQuery()}));}
+  function updateHash(){if(!state.market)return;history.replaceState(null,'','#'+new URLSearchParams({market:state.market.market_id,...(state.start!==null?{start:state.start,end:state.end}:{}),...walletQuery(),...(state.level!=='auto'?{level:state.level}:{})}));}
 
   async function loadSeries(overview=false){
     if(!state.market)return;
@@ -214,7 +227,7 @@
     $('event-cards').textContent='Loading archived siblings…';history.replaceState(null,'',`#event=${encodeURIComponent(eventId)}`);
     try{
       const event=await api(`/api/events/${encodeURIComponent(eventId)}?stale_after=${$('stale').value}`);if(sequence!==state.eventSequence)return;
-      if(!state.market||state.market.event_id!==eventId){state.market=event.siblings.find(m=>m.fill_count>0)||null;state.start=null;state.end=null;state.wallets=[];state.walletRole='either';$('wallet-ids').value='';$('wallet-role').value='either';renderFilters();chart.overview=null;}
+      if(!state.market||state.market.event_id!==eventId){state.market=event.siblings.find(m=>m.fill_count>0)||null;state.start=null;state.end=null;state.wallets=[];state.walletRole='either';state.level='auto';setGranularityControls(state.level);$('wallet-ids').value='';$('wallet-role').value='either';renderFilters();chart.overview=null;}
       $('market-title').textContent=event.title;$('market-eyebrow').textContent='EVENT COMPARISON';$('market-id').textContent=`Event ${eventId}`;
       $('market-state').textContent=`${event.siblings.length} archived siblings · ${stamp(event.as_of)} UTC`;
       $('event-sum').textContent=event.sum===null?'Incomplete':event.sum.toFixed(3);$('event-sum-note').textContent=`${event.stale_siblings} stale or missing legs · not normalized`;
@@ -262,7 +275,8 @@
   document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)&&!document.querySelector('dialog[open]')){e.preventDefault();$('search').focus();}});
   $('price-tab').addEventListener('click',()=>{if(state.market){priceView();state.event=null;state.offset=0;loadSeries(!chart.overview);}});
   $('comparison-tab').addEventListener('click',()=>{const id=state.market?.event_id||state.event;if(id)openEvent(id);});
-  $('reset-zoom').addEventListener('click',resetRange);$('level').addEventListener('change',()=>{state.offset=0;loadSeries();});
+  $('reset-zoom').addEventListener('click',resetRange);$('level').addEventListener('change',toggleCustomGranularity);
+  $('granularity-minutes').addEventListener('input',clearFilterError);
   $('stale').addEventListener('change',()=>{chart.staleAfter=Number($('stale').value);chart.draw();});
   $('show-range').addEventListener('change',()=>{chart.showRange=$('show-range').checked;chart.draw();});
   $('show-dots').addEventListener('change',()=>{chart.showDots=$('show-dots').checked;chart.draw();});
@@ -287,7 +301,7 @@
       const id=hash.get('market')||list?.[0]?.market_id;
       if(id){const a=Number(hash.get('start')),b=Number(hash.get('end')),wallets=parseWallets(hash.get('wallets')||''),role=hash.get('wallet_role')||'either';
         if(!['either','maker','taker'].includes(role))throw new Error('Wallet role must be either, maker, or taker.');
-        await openMarket(id,hash.has('start')&&Number.isFinite(a)&&Number.isFinite(b)&&b>a?{start:a,end:b}:null,{wallets,role});}
+        await openMarket(id,hash.has('start')&&Number.isFinite(a)&&Number.isFinite(b)&&b>a?{start:a,end:b}:null,{wallets,role,level:normalizeLevel(hash.get('level')||'auto')});}
       else $('onboarding').hidden=false;
     }catch(error){$('connection-status').textContent='Connection unavailable';$('onboarding').hidden=false;$('library').textContent=error.message;toast(error.message);}
   }
