@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+data/
+cache/
+*.duckdb*
+*.parquet
+*.lock
+.env
+.env.*
+screenshots/
+test-results/
