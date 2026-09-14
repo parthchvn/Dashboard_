@@ -1,0 +1,61 @@
+name: Validate granularity candidate
+on:
+  push:
+    branches: [work/granularity-workspace]
+    paths:
+      - .github/workflows/granularity-check.yml
+      - .dev/**
+permissions:
+  contents: write
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare byte-verified worktree
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/granularity" 96e5a7dade91358c31504b0dfa9cbb83c3ec64cb
+          cd "$RUNNER_TEMP/granularity"
+          cp "$GITHUB_WORKSPACE/.dev/test_granularity.py" tests/test_granularity.py
+          python "$GITHUB_WORKSPACE/.dev/apply_granularity.py"
+          python "$GITHUB_WORKSPACE/.dev/extend_checks.py"
+          git diff --check
+      - name: Install test dependencies
+        working-directory: ${{ runner.temp }}/granularity
+        run: |
+          pip install -e '.[test,review]' playwright
+          playwright install --with-deps chromium
+      - name: Python and JavaScript regression tests
+        working-directory: ${{ runner.temp }}/granularity
+        run: |
+          pytest -q
+          node --check xvi/static/app.js
+          node --check xvi/static/filters.js
+          node tests/chart.test.cjs
+          TZ=America/New_York node tests/filters.test.cjs
+          TZ=Asia/Singapore node tests/filters.test.cjs
+      - name: Real database and browser integration
+        working-directory: ${{ runner.temp }}/granularity
+        run: python tests/browser_smoke.py
+      - name: Publish tested candidate branch only
+        working-directory: ${{ runner.temp }}/granularity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md tests xvi
+          git commit -m 'Add chart granularity to date and wallet filter row'
+          git push origin HEAD:refs/heads/feature/market-granularity
+          git log -1 --format='CANDIDATE_COMMIT=%H TREE=%T'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: granularity-browser-screenshots
+          path: ${{ runner.temp }}/granularity/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
