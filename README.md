@@ -51,11 +51,33 @@ The first request otherwise builds only the raw cache and requested aggregation 
 ## Interface
 
 - Searchable market/event library; light and dark themes; responsive desktop/mobile layouts; setup, empty, loading and error states.
-- Zoomable traded-price chart with automatic resolution, a full-history navigator, drag and wheel zoom, time presets, and a precise UTC date range. Double-click or Home resets. Raw execution dots appear at raw resolution; high/low whiskers retain each occupied bar's extremes when zoomed out.
+- Zoomable traded-price chart with automatic resolution, a full-history navigator, drag and wheel zoom, two always-visible initial/final date cells (inclusive UTC days). Double-click or Home resets. Raw execution dots appear at raw resolution; high/low whiskers retain each occupied bar's extremes when zoomed out.
 - Window-specific price changes, recorded notional, fill counts, distinct transaction counts, observed-slot coverage, volume bars, and a paginated execution tape. Select a fill to inspect both original and outcome-1-equivalent semantics.
 - Event comparison includes every sibling in the imported metadata, including metadata-only markets without fills. A common-as-of sum reports stale/missing legs; it is a diagnostic, not an enforced identity or proof of an exhaustive outcome universe.
 - Provenance is measured from ingested files. A closing outcome is a conservative **metadata indication**, not an on-chain settlement assertion. A missing settlement time is shown as unavailable; `end_date` is never silently treated as settlement time.
 - CSV export contains actual fills in the current window, never visual carry-forward values. Copy view preserves a local market/window link.
+
+## Date and wallet filters
+
+Open a market, then use **Initial date** and **Final date** above the chart. Both are ordinary date-entry cells; no modal or preset buttons are required. **Apply filters** selects both complete dates in UTC, including the final day's last second. Selecting the same date twice selects one day. Internally, this is `[initial midnight, midnight after final date)`, independent of your computer's timezone and daylight-saving changes. Invalid or reversed dates leave the applied view unchanged.
+
+The chart still supports drag/scroll zoom for second-level inspection. Its footer shows the exact window. After zooming, the cells show the days containing that window; editing a date selects whole days again. A wallet-only change preserves the exact zoomed window. **All dates** resets the time range without removing the applied wallet filter.
+
+Enter up to **50 full wallet addresses** in **Wallet IDs**, separated by commas, whitespace, new lines, or semicolons. Choose **Maker or taker**, **Taker only**, or **Maker only**, then apply. Matching is exact and case-insensitive. Multiple addresses are ORed, duplicate addresses collapse, and a fill matching both sides is still counted once. Blank input means all wallets. Invalid addresses are rejected rather than silently ignored. ENS names and partial addresses are not resolved.
+
+The filter affects the price chart, navigator, volume, window statistics, execution tape, pagination, and CSV export together. The chart is explicitly labeled **wallet-filtered**; it is not the full-market price path or a wallet's portfolio value. Price/action fields retain their existing recorded-taker interpretation, even for maker filters. Maker and taker address cells are visible in the tape; click either to apply that address and role, or use the inspector's wallet buttons. **Clear wallets** returns to market-wide observations without changing the applied time window.
+
+Filtered bars are computed from matching raw fills, not from market-wide cached bars. Prior observations used for visual staleness must also match the wallet and role. Empty filtered windows remain empty. The shared market cache is never rewritten by a wallet query; existing databases need no re-ingestion. Wallet queries still scan the selected market's raw cache and are not separately wallet-indexed or full-archive benchmarked.
+
+**Copy view** includes the applied market, dates, wallet addresses and role in the local URL fragment; do not share that URL when you wish to keep the chosen addresses private. Switching to a different market clears the wallet filter. Event comparison remains explicitly market-wide, and market-wide review overlays are hidden while a wallet subset is active. No new research sampling or trader-identity claims are introduced.
+
+API endpoints `series`, `trades`, and `export.csv` accept the same optional query parameters:
+
+```text
+/api/markets/MARKET_ID/series?start=UNIX_SECONDS&end=UNIX_SECONDS&wallets=ADDRESS_1,ADDRESS_2&wallet_role=either
+```
+
+API timestamps remain `[start,end)` Unix seconds; only the date cells provide inclusive-day conversion.
 
 ## Data semantics and safeguards
 
@@ -106,9 +128,10 @@ python -m pytest -q
 node --check xvi/static/app.js
 node --check xvi/static/chart.js
 node tests/chart.test.cjs
+node tests/filters.test.cjs
 ```
 
-Tests cover price/action normalization, safe IDs, duplicate conflicts, exact weighted aggregation, distinct transactions, chain ordering, interval boundaries, gaps, as-of sibling coverage, snapshot locks, cache invalidation, SQL-safe search, CSV export, response limits, and review-adapter wiring.
+Tests cover price/action normalization, safe IDs, duplicate conflicts, exact weighted aggregation, distinct transactions, chain ordering, interval boundaries, gaps, as-of sibling coverage, snapshot locks, cache invalidation, SQL-safe search, CSV export, response limits, review-adapter wiring, wallet role/OR filters, cache isolation, inclusive UTC dates, and filtered chart/tape/export consistency.
 
 GitHub Actions runs integration tests on Python 3.11 and 3.13, plus **real DuckDB + HTTP + Chromium** smoke tests using clearly synthetic fixtures. Browser screenshots are retained as a workflow artifact. These tests do not download the full dataset. To run browser checks locally:
 

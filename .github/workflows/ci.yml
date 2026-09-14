@@ -18,8 +18,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e '.[test,review]'
       - run: pytest -q
-      - run: node --check xvi/static/app.js && node --check xvi/static/chart.js
+      - run: node --check xvi/static/app.js && node --check xvi/static/chart.js && node --check xvi/static/filters.js
       - run: node tests/chart.test.cjs
+      - run: TZ=America/New_York node tests/filters.test.cjs
+      - run: TZ=Asia/Singapore node tests/filters.test.cjs
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 12
